@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Body, getClient } from "@tauri-apps/api/http";
 import { Loader } from "./components/atoms/Loader";
 import SyntaxHighlighter from "react-syntax-highlighter";
@@ -6,8 +6,11 @@ import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { ChatOpenAI } from "langchain/chat_models/openai";
 import { HumanMessage, SystemMessage } from "langchain/schema";
 import { GPT350TURBO16k } from "./utils/GPT_Models";
-import { ChatMessageHistory } from "langchain/memory";
+
 import clsx from "clsx";
+import { Link } from "react-router-dom";
+import { countTokens } from "./utils/countTokens";
+import React from "react";
 
 type InitialTokenType = {
 	data: {
@@ -49,11 +52,17 @@ function App() {
 	const [taskName, setTaskName] = useState("");
 	const [userPrompt, setUserPrompt] = useState("");
 	const [streamResponse, setStreamResponse] = useState("");
+	const [streamLoading, setStreamLoading] = useState(false);
 	const [streamHistory, setStreamHistory] = useState<ChatWithAiSchemaType[]>([]);
 	const [visibility, setVisibility] = useState({
 		showHistory: true,
 		showResponse: false,
 	});
+	const containerRef = React.useRef<HTMLFormElement>(null);
+
+	useEffect(() => {
+		scrollDown();
+	}, [streamHistory]);
 
 	async function getInitialToken(): Promise<InitialTokenType> {
 		const client = await getClient();
@@ -118,8 +127,14 @@ function App() {
 		// setTaskSchema(response.data);
 	}
 
+	const scrollDown = () => {
+		if (containerRef.current) {
+			containerRef.current?.scrollIntoView({ behavior: "smooth" });
+		}
+	};
+
 	const systemTemplate =
-		"Answer the following question use CONTEXT as the to follow previus answer and questions. If there is no CONTEXT yet answer regulary";
+		"Answer the following question use CONTEXT as the to follow previus answer and questions. If there is no CONTEXT yet answer regulary. Each response have to be returned as makrdown. So if your response has list elements, code block etc use makrdown syntax.";
 
 	const chat = new ChatOpenAI({
 		openAIApiKey: import.meta.env.VITE_MY_API_KEY,
@@ -129,9 +144,8 @@ function App() {
 
 	const StartChatWithAi = async (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
+		setStreamLoading(true);
 		setVisibility({ showHistory: false, showResponse: true });
-		const history = new ChatMessageHistory();
-		await history.addUserMessage(userPrompt);
 
 		const MessageWithorWithoutContext =
 			streamHistory.length > 0
@@ -154,18 +168,10 @@ function App() {
 			console.log(res.content);
 			assistantResponse += res.content;
 
-			// i dont want to overide the array i want to push more data to it
 			setStreamResponse((prev) => prev + res.content);
-			// setTest((prev) => prev + res.content);
 		}
 		setVisibility({ showHistory: true, showResponse: false });
-		// await history.addAIChatMessage(assistantResponse);
-		// const pastMessages = [new HumanMessage(userPrompt), new AIMessage(assistantResponse)];
-
-		// const memory = new BufferMemory({
-		// 	chatHistory: new ChatMessageHistory(pastMessages),
-		// });
-		// const chain = new ConversationChain({ llm: chat, memory });
+		setStreamLoading(false);
 
 		setStreamHistory((prev) => [
 			...prev,
@@ -173,12 +179,24 @@ function App() {
 			{ role: "assistant", content: assistantResponse },
 		]);
 		setStreamResponse("");
+		if (containerRef.current) {
+			containerRef.current?.scrollIntoView({ behavior: "smooth" });
+		}
+		const testTokens = countTokens(JSON.stringify(streamHistory), 2042);
+		console.log("testTokens", testTokens);
+
+		// const num = encoding.encode(JSON.stringify(streamHistory)).length;
+		// console.log("encoding", num);
+		// const num = countTokens([JSON.stringify(streamHistory]), 'gpt-4'); // 11
 	};
 
 	return (
 		<>
 			<main className="flex min-h-screen flex-col items-center bg-slate-900 pt-5">
 				<img className="w-48" src="./logo.png" alt="ai devs logo" />
+
+				<Link to="/ask-ai">Ask GPT</Link>
+
 				<form className="flex flex-col gap-3" onSubmit={handleTask}>
 					<label className="mt-3 flex flex-col gap-2" htmlFor="taskName">
 						<span className="text-green-500">Task name</span>{" "}
@@ -231,39 +249,77 @@ function App() {
 					</article>
 				)}
 
+				<button onClick={scrollDown}>scroll</button>
+
 				<h2 className="text-white">Ai part</h2>
-				<form onSubmit={StartChatWithAi}>
+
+				{streamLoading && <Loader loading={streamLoading} />}
+				{visibility.showHistory &&
+					streamHistory.map((item, index) => (
+						<div
+							key={index + item.content.slice(0, 10)}
+							className={clsx(
+								`prose relative my-5 flex w-2/3 max-w-3xl flex-col flex-wrap rounded-lg bg-gray-700 px-6 py-6 text-white ${
+									item.role === "user" && "bg-green-800"
+								}`,
+							)}
+						>
+							<img
+								className="absolute left-2 top-2 my-0 h-12 w-12"
+								src={`${item.role === "assistant" ? "/boticon.png" : "usericon.png"}`}
+							/>
+							<SyntaxHighlighter
+								customStyle={{
+									width: "100%",
+									marginTop: "0",
+									maxWidth: "800px",
+									padding: "2rem",
+									borderRadius: "10px",
+								}}
+								language="json"
+								wrapLines={true}
+								wrapLongLines={true}
+								style={atomOneDark}
+							>
+								{item.content}
+							</SyntaxHighlighter>
+						</div>
+					))}
+				{visibility.showResponse && (
+					<div className="prose relative my-5 flex w-2/3 max-w-3xl flex-wrap  rounded-lg bg-gray-700 px-6 py-6 text-white">
+						<img className="absolute left-2 top-2 my-0 h-12 w-12" src={"/boticon.png"} />
+						<SyntaxHighlighter
+							customStyle={{
+								width: "100%",
+								maxWidth: "800px",
+								marginTop: "0",
+								padding: "2rem",
+								borderRadius: "10px",
+							}}
+							wrapLines={true}
+							language="json"
+							style={atomOneDark}
+							wrapLongLines={true}
+						>
+							{streamResponse}
+						</SyntaxHighlighter>
+					</div>
+				)}
+				<form ref={containerRef} onSubmit={StartChatWithAi}>
 					<label className="mt-3 flex flex-col gap-2" htmlFor="userPrompt">
 						<input
 							onChange={(e) => setUserPrompt(e.target.value)}
+							className=" w-full rounded-lg bg-slate-600 px-5 py-2 text-white"
 							value={userPrompt}
 							name="userPrompt"
 							type="text"
 						/>
 					</label>
+
+					<button type="submit" className="border-2 border-solid border-white text-white">
+						run ai
+					</button>
 				</form>
-				<button type="submit" className="border-2 border-solid border-white text-white">
-					run ai
-				</button>
-				{visibility.showHistory &&
-					streamHistory.map((item, index) => (
-						<p
-							key={index + item.content.slice(0, 10)}
-							className={clsx(
-								`prose my-5 flex w-2/3 max-w-3xl flex-col flex-wrap rounded-lg bg-gray-700 px-10 py-5 text-white ${
-									item.role === "user" && "bg-green-800"
-								}`,
-							)}
-						>
-							<span>{item.role}</span>
-							{item.content}
-						</p>
-					))}
-				{visibility.showResponse && (
-					<p className="prose my-5 flex w-2/3 max-w-3xl flex-wrap rounded-lg bg-gray-700 px-10 py-5 text-white">
-						{streamResponse}
-					</p>
-				)}
 			</main>
 		</>
 	);
